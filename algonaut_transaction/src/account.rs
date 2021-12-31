@@ -1,5 +1,3 @@
-use std::convert::TryInto;
-
 use crate::auction::{Bid, SignedBid};
 use crate::error::TransactionError;
 use crate::transaction::{SignedTransaction, Transaction, TransactionSignature};
@@ -11,14 +9,13 @@ use algonaut_crypto::{mnemonic, Signature};
 use algonaut_model::algod::v2::CompiledTeal;
 use rand::rngs::OsRng;
 use rand::Rng;
-use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
 pub struct Account {
     seed: [u8; 32],
     address: Address,
-    key_pair: Ed25519KeyPair,
+    key_pair: ed25519_dalek::Keypair,
 }
 
 impl Account {
@@ -35,24 +32,20 @@ impl Account {
 
     /// Create account from 32 byte seed
     pub fn from_seed(seed: [u8; 32]) -> Account {
-        let key_pair = Ed25519KeyPair::from_seed_unchecked(&seed).unwrap();
-        let public_key = key_pair.public_key().as_ref();
-        let public_key_byte_array = key_pair
-            .public_key()
-            .as_ref()
-            .try_into()
-            .unwrap_or_else(|_| panic!("Invalid public key length: {}", public_key.len()));
-        let address = Address::new(public_key_byte_array);
+        let secret = ed25519_dalek::SecretKey::from_bytes(&seed).unwrap();
+        let public = ed25519_dalek::PublicKey::from(&secret);
+
+        let address = Address::new(public.to_bytes());
         Account {
             seed,
             address,
-            key_pair,
+            key_pair: ed25519_dalek::Keypair { public, secret },
         }
     }
 
     #[cfg(test)]
     pub(crate) fn raw_public_key(&self) -> &[u8] {
-        self.key_pair.public_key().as_ref()
+        self.key_pair.public.as_bytes()
     }
 
     /// Get the public key address of the account
@@ -72,13 +65,9 @@ impl Account {
 
     /// Sign the given bytes, and wrap in Signature.
     fn generate_raw_sig(&self, bytes: &[u8]) -> Signature {
+        use ed25519_dalek::Signer;
         let signature = self.key_pair.sign(bytes);
-        // ring returns a signature with padding at the end to make it 105 bytes, only 64 bytes are actually used
-        let stripped_signature: [u8; 64] = signature.as_ref()[..64]
-            .try_into()
-            // unwrap: we passed ..64, try_into() always succeeds
-            .unwrap();
-        Signature(stripped_signature)
+        Signature(signature.to_bytes())
     }
 
     /// Sign the given bytes, and wrap in signature. The message is prepended with an identifier for domain separation.

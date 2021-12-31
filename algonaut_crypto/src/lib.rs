@@ -3,7 +3,6 @@ use std::fmt::{self, Formatter};
 use algonaut_encoding::{deserialize_bytes32, SignatureVisitor, U8_32Visitor};
 use data_encoding::{BASE32_NOPAD, BASE64};
 use fmt::Debug;
-use ring::signature::UnparsedPublicKey;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Support for turning 32 byte keys into human-readable mnemonics and back
@@ -21,8 +20,18 @@ pub struct Ed25519PublicKey(pub [u8; 32]);
 
 impl Ed25519PublicKey {
     pub fn verify(&self, message: &[u8], signature: &Signature) -> bool {
-        let peer_public_key = UnparsedPublicKey::new(&ring::signature::ED25519, self.0);
-        match peer_public_key.verify(message, signature.0.as_ref()) {
+        use ed25519_dalek::Verifier;
+        let public_key = match ed25519_dalek::PublicKey::from_bytes(&self.0) {
+            Ok(it) => it,
+            Err(_) => return false,
+        };
+
+        let signature = match ed25519_dalek::Signature::from_bytes(&signature.0) {
+            Ok(it) => it,
+            Err(_) => return false,
+        };
+
+        match public_key.verify(message, &signature) {
             Ok(()) => true,
             Err(_e) => {
                 println!("Signature verification failed");
